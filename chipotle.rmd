@@ -1,0 +1,197 @@
+
+Using data from Thinknum are used to find potential locations for new Chipotle restaurants,Thinknum tracks thousands of websites capturing and indexing vast amounts of public data.
+
+LOADING AND HAVING A LOOK AT THE DATA
+
+```{r}
+#install.packages("dplyr")
+library(tidyverse)
+library(leaflet)
+library(leaflet.extras)
+library(sf)
+
+# Read datasets/chipotle.csv into a tibble named chipotle using read_csv
+chipotle <- read_csv("C:/Users/navee/OneDrive/Documents/datacamp/datasets/chipotle.csv")
+
+# Print out the chipotle tibble using the head function
+print(head(chipotle))
+
+
+```
+
+Plotting all the closed locations so that we do not reccomend opening a Chipotle in a previously closed location.
+
+```{r}
+
+# Create a leaflet map of all closed Chipotle stores
+closed_chipotles <- 
+chipotle %>% 
+  # Filter the chipotle tibble to stores with a value of t for closed
+  filter(closed==TRUE) %>% 
+  leaflet() %>% 
+  # Use addTiles to plot the closed stores on the default Open Street Map tile
+  addTiles() %>%
+  # Plot the closed stores using addCircles
+  addCircles() 
+
+# Print map of closed chipotles
+print(closed_chipotles)
+```
+
+Counting the number of closed Chipotle's
+
+```{r}
+# Use count from dplyr to count the values for the closed variable
+chipotle %>% 
+  filter(closed == TRUE) %>%
+    count()
+
+# Create a new tibble named chipotle_open that contains only open chipotle 
+chipotle_open <- chipotle %>% 
+  filter(closed == FALSE) %>% 
+  # Drop the closed column from chipotle_open
+  dplyr::select(1:7)
+
+```
+
+Where's the closest Chipotle? where aren't there Chipotles (in the US)? By mapping all of the Chipotle locations on an interactive leaflet map we can start to explore patterns in the geographic distribution of the chain's locations.
+
+Since there are thousands of store locations, many of which are clustered closely together, we will use a heatmap.
+
+```{r}
+# Pipe chipotle_open into a chain of leaflet functions
+chipotle_heatmap <- 
+chipotle_open%>% 
+  leaflet() %>% 
+  # Use addProviderTiles to add the CartoDB provider tile 
+  addProviderTiles("CartoDB") %>%
+  # Use addHeatmap with a radius of 8
+  addHeatmap(radius = 8)
+
+# Print heatmap
+print(chipotle_heatmap)
+```
+
+Counting the number of Chipotle's in each State
+
+```{r}
+chipotles_by_state <- 
+chipotle_open %>% 
+  # Filter the data to only Chipotles in the United States
+  filter(ctry=="United States") %>% 
+  # Count the number of stores in chipotle_open by st
+  count(st) %>% 
+  # Arrange the number of stores by state in ascending order
+  arrange(desc(n))
+
+# Print the state counts
+chipotles_by_state
+```
+
+The chipotle_by_state tibble had 48 rows, but there are 50 fifty states in the US.Meaning there are 2 states which do not have a Chipotle. 
+
+```{r}
+# Use the %in% operator to determine which states are in chipotles_by_state
+state.abb %in% chipotles_by_state$st
+
+# Use the %in% and ! operators to determine which states are not in chipotles_by_state
+!(state.abb %in% chipotles_by_state$st)
+
+# Create a states_wo_chipotles vector
+states_wo_chipotles <- state.abb[!(state.abb %in% chipotles_by_state$st)]
+
+# Print states with no Chipotles
+states_wo_chipotles
+```
+
+Let's focus on the only state that does not have a Chipotle: South Dakota. If we were to open a Chipotle location in South Dakota, how might we go about selecting proposed locations? In the following chunks of code, we look at several maps to explore how the location of current Chipotles as well as geographic, transportation, and governmental features of the state may inform this decision.
+
+```{r}
+south_dakota_pop <- readRDS("C:/Users/navee/OneDrive/Documents/datacamp/datasets/south_dakota_pop.rds")
+
+# Create color palette to color map by county population estimate
+pal <- colorNumeric(palette = "viridis", domain = south_dakota_pop$estimate)
+
+sd_pop_map <-
+  south_dakota_pop %>%
+  leaflet() %>%
+  addProviderTiles("CartoDB") %>%
+  # Add county boundaries with addPolygons and color by population estimate
+  addPolygons(stroke = FALSE, fillOpacity = 0.7, color = ~ pal(estimate),label = ~ NAME) %>%
+  
+  # Add a legend using addLegend 
+  addLegend(pal = pal, values = ~estimate, title = "Population")
+
+# Print map of South Dakota population by county
+print(sd_pop_map)
+```
+
+Minnehaha and Pennington counties really stand out on population map. These counties are home to Sioux Falls and Rapid City, respectively.Sioux Falls has a larger population, but Rapid City is proximate to Badlands National park, which has a million visitors a year. Additionally, we should note that I-90, a major interstate in America, runs through both cities.
+
+
+```{r}
+# Load chipotle_sd_locations.csv that contains proposed South Dakota locations  
+chipotle_sd_locations <- read_csv("datasets/chipotle_sd_locations.csv")
+
+# limit chipotle store data to locations in states boardering South Dakota
+chipotle_market_research <- 
+  chipotle_open %>% 
+  filter(st %in% c("MN", "MT", "ND", "NE", "WY")) %>% 
+  dplyr::select(city, st, lat, lon) %>% 
+  mutate(status = "open") %>% 
+  # bind the data on proposed SD locations onto the open store data
+  bind_rows(chipotle_sd_locations) 
+
+# print the market research data
+chipotle_market_research
+```
+
+mapping our proposed Chipotle restaurants in Sioux Falls and Rapid City so we can quickly see how close they are to the nearest open location.
+
+```{r}
+
+# Create a blue and red color palette to distinguish between open and proposed stores
+pal <- colorFactor(palette = c("Blue", "Red"), domain = c("open", "proposed"))
+
+# Map the open and proposed locations
+sd_proposed_map <-
+  chipotle_market_research %>% 
+  leaflet() %>% 
+  # Add the Stamen Toner provider tile
+  addProviderTiles(providers$Stamen.Toner) %>%
+  # Apply the pal color palette
+  addCircles(color = ~pal(status)) %>%
+  # Draw a circle with a 100 mi radius around the proposed locations
+  addCircles(data = chipotle_sd_locations, radius = (100 * 1609.34), color = ~pal(status), fill = FALSE) # there approximately 1609.34 meters in a mile
+
+# Print the map of proposed locations 
+print(sd_proposed_map)
+```
+
+There are no Chipotle's in 100 mile radius of either Sioux Falls and Rapid City, hence we can open one in either locations 
+
+```{r}
+# load the Voronoi polygon data 
+polys <- readRDS("datasets/voronoi_polygons.rds")
+
+voronoi_map <- 
+  polys %>%
+  leaflet() %>%
+  # Use the CartoDB provider tile
+  addProviderTiles("CartoDB") %>%
+  # Plot Voronoi polygons using addPolygons
+  addPolygons(fillColor = ~pal(status), weight = 0.5, color = "black") %>%
+  # Add proposed and open locations as another layer
+  addCircleMarkers(data = chipotle_sd_locations, label = ~city, color = ~pal(status))
+
+# Print the Voronoi map
+print(voronoi_map)
+
+#---------
+
+# Where should the next Chipotle store be? 
+next_chipotle <- tibble(location = c("Rapid City, SD", "Sioux Falls, SD"),
+                        open_new_store = c(FALSE, TRUE))
+
+```
+
